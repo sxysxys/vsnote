@@ -50,4 +50,6 @@ public class UserProvider extends ContentProvider {
 ```
 ## 请求系统功能
 第三方应用想获取用户当前通讯录、短信等，可以通过内容提供者获取（因为这些东西本质也是存在系统应用的数据库中的），需要拿到上面说的那俩路径（一般通过百度或者查看源码），然后再manifest中添加`<user-permission>`请求相应权限。
+## 使用loaderManager进行请求
+详见`ImagePickerDemo`
 
