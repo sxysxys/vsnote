@@ -807,17 +807,248 @@ public class ReOrdering implements Runnable {
 
 *happens before* 担保原则还有另一个作用：当线程向一个 **volatile** 变量写入时，在线程写入之前的其他所有变量（包括非 **volatile** 变量）也会刷新到主内存。当线程读取一个 **volatile** 变量时，它也会读取其他所有变量（包括非 **volatile** 变量）与 **volatile** 变量一起刷新到主内存。尽管这是一个重要的特性，它解决了 Java 5 版本之前出现的一些非常狡猾的 bug ，但是你不应该依赖这项特性来“自动”使周围的变量变得易变性 （ **volatile** ）的 。如果你希望变量是易变性 （ **volatile** ）的，那么维护代码的任何人都应该清楚这一点。
 
+**应用：单例模式**
+
+```java
+public class SingleObj {
+    public volatile static SingleObj singleObj;
+
+    private SingleObj() {
+        System.out.println(Thread.currentThread().getName() + "创建了实例");
+    }
+
+    public static SingleObj getInstance() {
+        if (singleObj == null) {
+            synchronized (SingleObj.class) {
+                if (singleObj == null) {
+                  // 非原子性操作
+                    singleObj = new SingleObj();
+                }
+            }
+        }
+        return singleObj;
+    }
+
+    public static void main(String[] args) {
+        for (int i = 0; i < 1000; i++) {
+            new Thread(() -> {
+                SingleObj instance = getInstance();
+                System.out.println(instance.toString());
+            }).start();
+        }
+    }
+}
+//如果不使用volatile，在这个例子中，由于new对象是非原子性的操作，由于指令重排的原因，引用的指向和对象的构造顺序可能会颠倒，可能会造成一些错误，也就是还没有执行构造方法可能引用就指向了对象，这时候如果另一个线程执行`getInstance()`就会拿到这个没初始化好的对象。
+```
+
 #### 自己对volatile的理解
 
 http://www.sxyniubi.xyz/archives/%E7%BA%BF%E7%A8%8B%E5%86%85%E5%AD%98%E7%9A%84%E5%90%8C%E6%AD%A5%E6%97%B6%E6%9C%BA
 
-### 原子类(TODO)
+## 原子类(TODO)
 
 > 引出
 
 由于上面说了，volatile只是保证工作内存和主内存之间的刷新，并不能保证操作的原子性，如果我们不想使用Sychronized和Lock的话(太麻烦)，怎么保证对变量操作的原子性呢？
 
 此时就要用到java提供的原子类了，它直接使用硬件底层的原子性解决了问题，效率非常高。
+
+### CAS
+
+> cas的概念
+
+比较并修改，是CPU底层的一种原子操作。
+
+> 原子类中的应用
+
+https://blog.csdn.net/v123411739/article/details/79561458
+
+> 乐观锁的理解
+
+https://blog.csdn.net/L_BestCoder/article/details/79298417?utm_medium=distribute.pc_relevant_t0.none-task-blog-BlogCommendFromMachineLearnPai2-1.channel_param&depth_1-utm_source=distribute.pc_relevant_t0.none-task-blog-BlogCommendFromMachineLearnPai2-1.channel_param
+
+究其本质，原子类底层其实就是用了乐观锁的思想，不对操作用锁：
+
+1. 而在数据库的事务中，我们使用version进行乐观锁的判断。
+2. 在原子类中，我们通过CAS解决了乐观锁的判断：
+
+```java
+public final int getAndAddInt(Object var1, long var2, int var4) {
+    int var5;
+    do {
+        var5 = this.getIntVolatile(var1, var2);
+      // 如果在这里切换了线程，将内存修改了，那么线程切换回这里的时候，会进行CAS判断，如果CAS判断错误就会一直循环getIntVolatile拿到最新的内存值。
+    } 
+  while(!this.compareAndSwapInt(var1, var2, var5, var5 + var4));
+    return var5;
+}
+```
+
+> ABA问题在CAS中的解决
+
+ABA问题其实就是乐观锁问题，也就是在主线程执行`this.compareAndSwapInt(var1, var2, var5, var5 + var4)`，想将A->B的时候，可能此时别的线程已经将这个内存区域中的值从A->B->A了，再次切换回主线程，主线程以为当前的A还是之前的那个A，就不会做处理，这可能会导致一些潜在的隐患。
+
+**结合上面的代码例子，Cas确实解决了乐观锁的问题，但是上面的代码，如果线程切换回来，发现内存中的值没有变（但是其实别的线程进行了ABA操作），这时候会怎么办呢？**
+
+在原子类中也有相应的乐观锁机制`AtomicStampedReference`，管理对应的操作版本：
+
+```java
+public static void main(String[] args) {
+    // 第一个参数是包裹的值，第二个参数是版本号（与乐观锁同理论）
+    AtomicStampedReference<Integer> atomicStampedReference = new AtomicStampedReference<>(1, 1);
+
+    new Thread(() -> {
+        System.out.println("a0->" + atomicStampedReference.getStamp());
+        try {
+            TimeUnit.SECONDS.sleep(2);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+        // 修改后将版本号加1
+        System.out.println("a1->" + atomicStampedReference.compareAndSet(1, 2,
+                atomicStampedReference.getStamp(), atomicStampedReference.getStamp() + 1));
+        System.out.println("a1->" + atomicStampedReference.getStamp());
+
+        System.out.println("a2->" + atomicStampedReference.compareAndSet(2, 1,
+                atomicStampedReference.getStamp(), atomicStampedReference.getStamp() + 1));
+        System.out.println("a2->" + atomicStampedReference.getStamp());
+    }).start();
+
+    new Thread(() -> {
+        System.out.println("b0->" + atomicStampedReference.getStamp());
+        System.out.println("b1->" + atomicStampedReference.compareAndSet(1, 2,
+                atomicStampedReference.getStamp(), atomicStampedReference.getStamp() + 1));
+        System.out.println("b1->" + atomicStampedReference.getStamp());
+    }).start();
+}
+
+// 通过加入了version版本号控制，在每次操作的时候可以进行一下版本号的判断，来解决ABA问题。
+```
+
+## 各种锁的理解
+
+> 公平锁和非公平锁
+
+- 公平锁：不能插队，先来后到，可以通过`new ReentrantLock(true)`来进行设置。
+- 非公平锁：能插队，默认就是非公平锁（Lock和Synchronized）。
+
+> 可重入锁
+
+一个线程能够重复拿到锁。
+
+```java
+public class ReLockDemo {
+    public static void main(String[] args) {
+        Phone phone = new Phone();
+        new Thread(() -> {
+            phone.sms();
+        },"A").start();
+
+        new Thread(() -> {
+            phone.sms();
+        },"B").start();
+    }
+}
+
+// synchronized版本。
+class Phone {
+    public synchronized void sms() {
+        System.out.println(Thread.currentThread().getName() + "-> sendmsg");
+        call();
+    }
+    public synchronized void call() {
+        System.out.println(Thread.currentThread().getName() + "-> call" );
+    }
+}
+
+// Lock版本。
+class Phone2 {
+    private Lock lock = new ReentrantLock();
+
+    public void sms() {
+        lock.lock();
+        try {
+            System.out.println(Thread.currentThread().getName() + "-> sendmsg");
+            call();
+        } catch (Exception e) {
+            e.printStackTrace();
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    public void call() {
+        lock.lock();
+        try {
+            System.out.println(Thread.currentThread().getName() + "-> call" );
+        } catch (Exception e) {
+            e.printStackTrace();
+        } finally {
+            lock.unlock();
+        }
+    }
+}
+```
+
+> 自旋锁
+
+概念：就是锁的一种实现方式
+
+自定义自旋锁：通过使用一个原子类，其实就和原子类加法`getAndAddInt()`思想类似，通过原子类的CAS实现。
+
+```java
+public class SpinLock {
+    private AtomicReference<Thread> reference = new AtomicReference<>();
+
+    // 加锁操作
+    public void lock() {
+        Thread thread = Thread.currentThread();
+        System.out.println(thread.getName() + "-> lock");
+        while (!reference.compareAndSet(null, thread)) {
+
+        }
+    }
+
+    // 解锁操作
+    public void unLock() {
+        Thread thread = Thread.currentThread();
+        System.out.println(thread.getName() + "-> unLock");
+        reference.compareAndSet(thread, null);
+    }
+  
+    public static void main(String[] args) {
+        SpinLock spinLock = new SpinLock();
+
+        new Thread(() -> {
+            try {
+                spinLock.lock();
+                TimeUnit.SECONDS.sleep(2);
+            } catch (Exception e) {
+                e.printStackTrace();
+            } finally {
+                spinLock.unLock();
+            }
+
+        },"A").start();
+
+        new Thread(() -> {
+            try {
+                spinLock.lock();
+            } catch (Exception e) {
+                e.printStackTrace();
+            } finally {
+                spinLock.unLock();
+            }
+
+        },"B").start();
+    }
+}
+```
+
+## 死锁的排查
+
+1. 使用jps工具查看当前程序的进程号。
+2. 使用`jstack 进程号`查看当前的死锁信息。
 
 
 
