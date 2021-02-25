@@ -50,6 +50,7 @@
         </activity>
   ```
 - 数据传递
+   
    - 使用Bundle放入Intent中进行数据传递。
 - 数据交互：如果需要将下一个页面关闭的数据传到上一个页面，下面这几个缺一不可。
   - `startActivityForResult`：启动activity，并且带过一个id过去，当跳转回来的时候会带回来。
