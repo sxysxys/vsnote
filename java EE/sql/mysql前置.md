@@ -1,4 +1,4 @@
-mysql安装
+## mysql安装
 
 ![截屏2021-02-24 11.37.27](mysql前置.assets/截屏2021-02-24 11.37.27.png)
 
@@ -287,29 +287,285 @@ INSERT INTO `article`(`author_id`,`category_id`, `views`, comments, title, `cont
 
    `explain select * from staffs where name='July' or name='z3'`，在or的时候，mysql也要全表遍历，如果优化成index的话，由于此时返回的*，那么需要回表，此时mysql可能会选择all。
 
-
-
 ### 5. 面试题
 
+> 注意点
+
+1. group by：分组之前必排序，可能会产生临时表
+
+![截屏2021-02-25 19.19.39](mysql前置.assets/截屏2021-02-25 19.19.39.png)
+
+
+
+## 查询截取分析
+
+> 几种方法
+
+1. 慢查询日志的开启和捕获
+2. explain+慢sql分析
+3. show profile查询sql的执行细节和生命周期
+4. sql服务器参数调优
+
+### 原则
+
+#### 小表驱动大表
+
+![截屏2021-02-25 19.46.39](mysql前置.assets/截屏2021-02-25 19.46.39.png)
+
+	> in和exists
+
+- exists是先执行前面的查询，将结果进行exists后面查询条件的筛选。
+- in是先执行in后面的语句，将后面的条件列出，再进行前面的遍历。
+
+##### order by/group by排序优化
+
+ 如果没有使用到优化，而是使用了`filesort`，此时有两种算法，单路排序和双路排序。
+
+- 双路排序：mysql4.1之前使用，先将所有需要排序的行中的需要排序字段取出进行排序，再通过排序字段取出其他字段，需要两次磁盘io。
+
+- 单路排序：将需要排序的所有行都取出，直接在内存中排序，不需要第二次io，但是很占用buffer内存。
+
+  > 单路的问题
+
+  ![截屏2021-02-25 20.42.53](mysql前置.assets/截屏2021-02-25 20.42.53.png)
+
+  - 所以尽量少用select *，如果不能进行覆盖索引，也尽量取需要的字段。
+  - 尽量提高sort_buffer_size，避免出现单路的问题，变成多路排序。
+
+> 总结
+
+- 排序方式：分为filesort和扫描索引有序排序
+- 使用索引的最左前缀
+- group by是先排序再分组，和order by类似
 
 
 
 
 
+### 慢查询日志分析
+
+#### 常用命令
+
+- 查看是否开启：`show variables like '%slow_query_log%';`
+  - 其中记录了相应的慢sql文件保存地址
+- 开启慢查询日志：`set global slow_query_log=1;`，但是只能此时生效，关闭数据库就失效。
+- 永久生效：修改`my.cnf`文件![截屏2021-02-25 21.02.20](mysql前置.assets/截屏2021-02-25 21.02.20.png)
+- 查看慢查询的时间阈值：`show variable like '%long_query_time%';`
+- 查询当前系统有多少条慢记录：`show global status like '%Slow_queries%';`
+
+#### mysqldumpslow日志分析工具
+
+![截屏2021-02-25 21.35.04](mysql前置.assets/截屏2021-02-25 21.35.04.png)
+
+#### 批量插入数据脚本测试
+
+> 前置知识
+
+- 函数和存储过程：是只要创建了就随着mysql一直存在的，不会重启失效。
+
+> 进行插入1000w数据测试
+
+1. 建表
+
+2. 设置参数 `set global log_bin_trust_function_creators=1`
+
+3. 创建函数，保证每条数据都不同
+
+   - 随机产生字符串：
+
+     ```sql
+       DELIMITER $$ ## 将此时的sql执行不以;结尾，以$$结尾
+       ## 创建函数
+       CREATE FUNCTION rand_string(n INT) RETURNS VARCHAR(255)
+       BEGIN    ##方法开始 
+       DECLARE chars_str VARCHAR(100) DEFAULT   'abcdefghijklmnopqrstuvwxyzABCDEFJHIJKLMNOPQRSTUVWXYZ'; 
+       DECLARE return_str VARCHAR(255) DEFAULT ''; 
+       DECLARE i INT DEFAULT 0;
+       WHILE i < n DO   
+       SET return_str =CONCAT(return_str,SUBSTRING(chars_str,FLOOR(1+RAND()*52),1));
+       SET i = i + 1;
+       END WHILE;
+       RETURN return_str;
+       END $$
+     ```
+
+   - 产生随机数：
+
+     ```sql
+      #用于随机产生部门编号
+      DELIMITER $$
+      CREATE FUNCTION rand_num( ) RETURNS INT(5)  
+      BEGIN    
+      DECLARE i INT DEFAULT 0;   
+      SET i = FLOOR(100+RAND()*10);  RETURN i;   
+      END $$  
+     ```
+
+4. 创建存储过程
+
+   ```sql
+     ## 插入员工表
+     DELIMITER $$
+     CREATE PROCEDURE insert_emp(IN START INT(10),IN max_num INT(10))  
+     BEGIN  
+     DECLARE i INT DEFAULT 0;   
+     SET autocommit = 0;     
+     REPEAT  
+     SET i = i + 1;  
+     INSERT INTO emp (empno, ename ,job ,mgr ,hiredate ,sal ,comm ,deptno ) VALUES ((START+i) ,rand_string(6),'SALESMAN',0001,CURDATE(),FLOOR(1+RAND()*20000),FLOOR(1+RAND()*1000),rand_num());   
+     UNTIL i = max_num   
+     END REPEAT; 
+     COMMIT;   
+     END $$
+     
+      #执行存储过程，往dept表添加随机数据
+      DELIMITER $$
+      CREATE PROCEDURE insert_dept(IN START INT(10),IN max_num INT(10))  
+      BEGIN  
+      DECLARE i INT DEFAULT 0;    
+      SET autocommit = 0;     
+      REPEAT   
+      SET i = i + 1;   
+      INSERT INTO dept (deptno ,dname,loc ) VALUES (START +i ,rand_string(10),rand_string(8));   
+      UNTIL i = max_num   
+      END REPEAT;   
+      COMMIT;   
+      END $$ 
+   ```
+
+5. 调用存储过程：CALL insert_emp(100001,500000);
+
+#### show-profile
+
+> 概念
+
+- mysql提供可以用来分析当前会话中语句执行的资源消耗情况，用于sql调优。
+
+- 默认关闭，`show variables like 'profiling'` `set global profiling=on`
+
+- 查看profile：`show profiles;`![截屏2021-02-25 23.40.04](mysql前置.assets/截屏2021-02-25 23.40.04.png)
+
+- 具体查看其中的某一条细节，各个步骤的具体时间（sql的具体生命周期），举例（查看cpu和block io）：`show profile cpu,block io for query 2;`
+
+  ![截屏2021-02-25 23.44.18](mysql前置.assets/截屏2021-02-25 23.44.18.png)
+
+  具体要查看哪些：![截屏2021-02-25 23.44.44](mysql前置.assets/截屏2021-02-25 23.44.44.png)
+
+  <font color=red>出问题的几种情况：</font>![截屏2021-02-25 23.46.11](mysql前置.assets/截屏2021-02-25 23.46.11.png)
+
+#### 全局查询日志
+
+- 配置启用或者set启用
+
+![截屏2021-02-26 00.00.11](mysql前置.assets/截屏2021-02-26 00.00.11.png)
+
+- 不要在生产环境中启用
 
 
 
+## mysql锁
+
+## 表锁
+
+#### 常见命令
+
+- 查看表是否有锁：`show open tables;`
+
+> 表锁例子
+
+1. 创建表
+
+   ```sql
+    【表级锁分析--建表SQL】 
+    create table mylock( id int not null primary key auto_increment, 	   name varchar(20))
+    engine myisam;  ## 使用myisam引擎
+    insert into mylock(name) values('a');
+    insert into mylock(name) values('b');
+    insert into mylock(name) values('c');
+    insert into mylock(name) values('d');
+    insert into mylock(name) values('e'); 
+    select * from mylock;
+   ```
+
+   
+
+2. 手动增加表锁：`lock table mylock read,book write`
+
+   ```sql
+    lock table 表名字1 read(write)，表名字2 read(write)，其它;
+   ```
+
+3. 解锁：` unlock tables; ##释放表锁`
+
+   > 读锁结论
+
+   - 一个客户端加对`mylock`表加读锁，这个客户端不能进行插入，也不能进行对其他表的读取。
+
+   - 另一个客户端对mylock表可以读取，但是插入时会等待，直到上一个客户端释放锁。
+
+   > 写锁结论
+
+   - 一个客户端对mylock表加写锁，别的客户端读也会阻塞。
+
+   **读锁会阻塞写，但是不会阻塞读，而写锁都会阻塞**
+
+#### 如何分析表锁
+
+![截屏2021-02-26 12.35.48](mysql前置.assets/截屏2021-02-26 12.35.48.png)
+
+myisam引擎读写调度是写优先，不适合作为主表（偏写），因为写锁后，其他线程不能进行操作，可能造成永久堵塞。
 
 
 
+### 行锁（偏写）
 
+##### innodb和mysiam区别：事务和行锁
 
+> 行锁特点
 
+- 基于索引，没有索引就会变成表锁
 
+- 优点：并发度搞，冲突概率低，力度小
+- 缺点：开销大，加锁慢，会出现死锁
 
+**自动提交**：如果开启自动提交（默认开启）：`set autocommit=1;`，此时如果不显式指定事务（begin transaction），mysql也会将单个语句当做事务处理，不用自己显式的commit。
 
+#### 并发事务带来的问题
 
+1. 更新丢失
+2. 脏读
+3. 不可重复读
+4. 幻读
 
+#### 事务隔离级别
+
+![截屏2021-02-26 12.48.13](mysql前置.assets/截屏2021-02-26 12.48.13.png)
+
+#### 无索引行锁升级为表锁
+
+<font color=red>如果update语句后面的where没有走索引（例如没有加索引或、varchar和int类型没有区分），那么此时会将行锁升级为表锁。</font>
+
+#### 间隙锁
+
+使用范围条件而不是相等条件检索数据，会锁定整个范围内的所有索引键值，即使这个索引不存在。
+
+> 行锁性能监控
+
+- 查看行锁记录表：`show starus like '%innodb_row_lock%';`，如果出问题，使用`show-profile`进行判断
+
+  ![截屏2021-02-26 17.38.55](mysql前置.assets/截屏2021-02-26 17.38.55.png)
+
+## 主从复制
+
+### 原则
+
+1. 每个slave只能有一个master
+2. 一个master可以有多个slave
+
+#### 常见配置
+
+1. mysql版本一致
+2. 主从配置在mysqld下，修改相应的my.ini或者cnf文件
 
 
 

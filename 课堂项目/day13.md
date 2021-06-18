@@ -4,8 +4,10 @@
 - 和token生成类似，但是jwt是一种token的具体生成方法，而oauth2只是一种解决方案。
 
 ## 微信扫码登录流程
-[登录api](https://developers.weixin.qq.com/doc/oplatform/Website_App/WeChat_Login/Wechat_Login.html)
+
 可以完全类比于github的登陆，都是oath2的认证过程。
+
+![截屏2021-05-16 21.06.58](day13.assets/截屏2021-05-16 21.06.58.png)
 
 ### 步骤
 #### 后端部分

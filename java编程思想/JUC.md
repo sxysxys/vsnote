@@ -95,6 +95,10 @@ public class Phone {
 
 #### wait()和notify()
 
+**Thread方法总结：**
+
+https://blog.csdn.net/weixin_42476601/article/details/83045889
+
 https://www.cnblogs.com/moongeek/p/7631447.html
 
 > wait

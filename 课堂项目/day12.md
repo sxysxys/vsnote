@@ -186,3 +186,4 @@ setInterval(() => {
 - <font color=red>为什么有时候导入插件的时候需要进行`Vue.create()`，这是因为这些插件封装了一些真正的标签模板对象，而还有些插件例如`axios`、`js-cookie`这些里面都是一些js方法，所以只需要import包即可。</font>
 - 对于token的使用：第一是为了减少查询数据库的频率，第二是为了分布式使用；所以不用session。
 - 为什么当传递token的时候需要配置过滤器将cookie放入header中？<font color=red>那是因为cookie永远是伴随着服务端的，每个cookie对应了一个域名，它只会在请求特定的服务端域名的时候自己送过去；而我们项目部署、nginx反向代理都会导致域名变化，所以cookie根本就不会传过去；这时候需要乘着在请求之前，使用js获取cookie技术还能获取到的时候，赶紧把它加到这一次的请求头中，以便把token送入后端。</font>
+
